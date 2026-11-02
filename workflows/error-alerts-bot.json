@@ -1,0 +1,422 @@
+{
+  "name": "error-alerts-bot",
+  "description": null,
+  "active": true,
+  "createdAt": "2026-10-12T18:11:07.810Z",
+  "updatedAt": "2026-10-31T10:30:47.785Z",
+  "isArchived": false,
+  "versionCounter": 9,
+  "sourceWorkflowId": null,
+  "nodes": [
+    {
+      "parameters": {
+        "pollTimes": {
+          "item": [
+            {
+              "mode": "everyX",
+              "value": 1,
+              "unit": "minutes"
+            }
+          ]
+        },
+        "simple": false,
+        "filters": {
+          "q": "from:(noreply-apps-scripts-notifications@google.com OR n8n.io OR make.com OR zapier.com OR mailer-daemon) OR (error OR errors OR fail OR failed OR failure OR failures OR exception OR deactivated OR declined OR unsuccessful OR suspended OR \"turned off\" OR undeliverable OR помилка OR помилки OR ошибка OR \"не вдалося\" OR відхилено OR \"не пройшов\")"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.gmailTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        0
+      ],
+      "id": "69561844-fbae-4796-b883-9250f23bf548",
+      "name": "Gmail Trigger",
+      "credentials": {
+        "gmailOAuth2": {
+          "id": "",
+          "name": "Gmail account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "promptType": "define",
+        "text": "=From: {{ $json.from.value[0].address }}\nSubject: {{ $json.subject }}\nBody:\n{{ ($json.text || '').substring(0, 3000) }}",
+        "hasOutputParser": true,
+        "options": {
+          "systemMessage": "ROLE:\nYou analyze automated error / failure notification emails for a non-developer who maintains small automations.\n\nOUTPUT (JSON only):\n- platform: the service that sent or caused the error. One of: \"Apps Script\", \"n8n\", \"Make\", \"Zapier\", \"GitHub\", \"Payment\", \"Email delivery\", \"Other\".\n- name: the script, workflow, scenario, repository, card or service name. If not stated, use \"\".\n- error: what went wrong, max 1 short sentence in Ukrainian, plain words, no jargon.\n- severity: \"critical\" if the automation stopped working, data may be lost or a payment/card failed (invalid token, 401/403, permission denied, disabled, suspended, missing file or database, card declined, payment failed); \"medium\" if it fails sometimes (quota, rate limit, timeout, 429, a single failed build); \"low\" if it is a one-off or not really an error.\n\nRULES:\n- Never invent details that are not in the email.\n- If the email is not about an error or failure, set severity \"low\" and error \"Не схоже на помилку\"."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [
+        240,
+        0
+      ],
+      "id": "4d35e07a-505e-4019-9999-6216fde175ac",
+      "name": "AI Agent",
+      "onError": "continueErrorOutput",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "waitBetweenTries": 3000
+    },
+    {
+      "parameters": {
+        "jsonSchemaExample": "{\n  \"platform\": \"Apps Script\",\n  \"name\": \"CS Tasks Log\",\n  \"error\": \"Скрипт перевищив денний ліміт запитів до Notion.\",\n  \"severity\": \"medium\"\n}"
+      },
+      "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+      "typeVersion": 1.3,
+      "position": [
+        400,
+        224
+      ],
+      "id": "41d67283-2175-4916-b91e-8376db55bcb5",
+      "name": "Structured Output Parser"
+    },
+    {
+      "parameters": {
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.output.severity === 'critical' ? '🔴' : ($json.output.severity === 'medium' ? '🟡' : '🟢') }} {{ $json.output.platform }}{{ $json.output.name ? ' · ' + $json.output.name : '' }}\n🕐 {{ DateTime.fromJSDate(new Date($('Gmail Trigger').item.json.date)).setZone('Europe/Kiev').toFormat('dd.MM, HH:mm') }}\n💥 {{ $json.output.error }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        0
+      ],
+      "id": "b0ab8fd4-cf22-4c02-9689-ce405fab8b84",
+      "name": "Send alert",
+      "webhookId": "2f75020f-ef2b-4237-b782-ab9bb11dab8b",
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Allert Bot Token"
+        }
+      }
+    },
+    {
+      "id": "592ae32f-3fa5-4a70-a795-8b77b5bc49b3",
+      "name": "Gemini Chat Model",
+      "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+      "typeVersion": 1.2,
+      "position": [
+        160,
+        224
+      ],
+      "parameters": {
+        "modelName": "models/gemini-3-flash-preview",
+        "options": {
+          "temperature": 0.2
+        }
+      },
+      "credentials": {
+        "googlePalmApi": {
+          "id": "",
+          "name": "Google Gemini (PaLM) API"
+        }
+      }
+    },
+    {
+      "id": "762c0180-d8b2-4f27-9c6e-f5dce33a7566",
+      "name": "Send raw alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        560,
+        200
+      ],
+      "parameters": {
+        "additionalFields": {
+          "appendAttribution": false
+        },
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "=⚠️ AI не зміг розібрати лист, ось оригінал\n📧 {{ $('Gmail Trigger').item.json.subject }}\n👤 {{ $('Gmail Trigger').item.json.from.value[0].address }}\n🕐 {{ DateTime.fromJSDate(new Date($('Gmail Trigger').item.json.date)).setZone('Europe/Kiev').toFormat('dd.MM, HH:mm') }}"
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Allert Bot Token"
+        }
+      },
+      "webhookId": "4655efd9-e1ab-4413-8b91-3a688912df88"
+    }
+  ],
+  "connections": {
+    "Gmail Trigger": {
+      "main": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "AI Agent": {
+      "main": [
+        [
+          {
+            "node": "Send alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send raw alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Structured Output Parser": {
+      "ai_outputParser": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_outputParser",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Gemini Chat Model": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "AI Agent",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": true
+  },
+  "activeVersion": {
+    "versionId": "4525e694-4184-497b-971c-4f2ffcf5e59f",
+    "workflowId": "o5sLLV6GUsgNZV8n",
+    "nodes": [
+      {
+        "parameters": {
+          "pollTimes": {
+            "item": [
+              {
+                "mode": "everyX",
+                "value": 1,
+                "unit": "minutes"
+              }
+            ]
+          },
+          "simple": false,
+          "filters": {
+            "q": "from:(noreply-apps-scripts-notifications@google.com OR n8n.io OR make.com OR zapier.com OR mailer-daemon) OR (error OR errors OR fail OR failed OR failure OR failures OR exception OR deactivated OR declined OR unsuccessful OR suspended OR \"turned off\" OR undeliverable OR помилка OR помилки OR ошибка OR \"не вдалося\" OR відхилено OR \"не пройшов\")"
+          },
+          "options": {}
+        },
+        "type": "n8n-nodes-base.gmailTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          0
+        ],
+        "id": "69561844-fbae-4796-b883-9250f23bf548",
+        "name": "Gmail Trigger",
+        "credentials": {
+          "gmailOAuth2": {
+            "id": "",
+            "name": "Gmail account"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "promptType": "define",
+          "text": "=From: {{ $json.from.value[0].address }}\nSubject: {{ $json.subject }}\nBody:\n{{ ($json.text || '').substring(0, 3000) }}",
+          "hasOutputParser": true,
+          "options": {
+            "systemMessage": "ROLE:\nYou analyze automated error / failure notification emails for a non-developer who maintains small automations.\n\nOUTPUT (JSON only):\n- platform: the service that sent or caused the error. One of: \"Apps Script\", \"n8n\", \"Make\", \"Zapier\", \"GitHub\", \"Payment\", \"Email delivery\", \"Other\".\n- name: the script, workflow, scenario, repository, card or service name. If not stated, use \"\".\n- error: what went wrong, max 1 short sentence in Ukrainian, plain words, no jargon.\n- severity: \"critical\" if the automation stopped working, data may be lost or a payment/card failed (invalid token, 401/403, permission denied, disabled, suspended, missing file or database, card declined, payment failed); \"medium\" if it fails sometimes (quota, rate limit, timeout, 429, a single failed build); \"low\" if it is a one-off or not really an error.\n\nRULES:\n- Never invent details that are not in the email.\n- If the email is not about an error or failure, set severity \"low\" and error \"Не схоже на помилку\"."
+          }
+        },
+        "type": "@n8n/n8n-nodes-langchain.agent",
+        "typeVersion": 3.1,
+        "position": [
+          240,
+          0
+        ],
+        "id": "4d35e07a-505e-4019-9999-6216fde175ac",
+        "name": "AI Agent",
+        "onError": "continueErrorOutput",
+        "retryOnFail": true,
+        "maxTries": 2,
+        "waitBetweenTries": 3000
+      },
+      {
+        "parameters": {
+          "jsonSchemaExample": "{\n  \"platform\": \"Apps Script\",\n  \"name\": \"CS Tasks Log\",\n  \"error\": \"Скрипт перевищив денний ліміт запитів до Notion.\",\n  \"severity\": \"medium\"\n}"
+        },
+        "type": "@n8n/n8n-nodes-langchain.outputParserStructured",
+        "typeVersion": 1.3,
+        "position": [
+          400,
+          224
+        ],
+        "id": "41d67283-2175-4916-b91e-8376db55bcb5",
+        "name": "Structured Output Parser"
+      },
+      {
+        "parameters": {
+          "chatId": "YOUR_TELEGRAM_CHAT_ID",
+          "text": "={{ $json.output.severity === 'critical' ? '🔴' : ($json.output.severity === 'medium' ? '🟡' : '🟢') }} {{ $json.output.platform }}{{ $json.output.name ? ' · ' + $json.output.name : '' }}\n🕐 {{ DateTime.fromJSDate(new Date($('Gmail Trigger').item.json.date)).setZone('Europe/Kiev').toFormat('dd.MM, HH:mm') }}\n💥 {{ $json.output.error }}",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          560,
+          0
+        ],
+        "id": "b0ab8fd4-cf22-4c02-9689-ce405fab8b84",
+        "name": "Send alert",
+        "webhookId": "2f75020f-ef2b-4237-b782-ab9bb11dab8b",
+        "credentials": {
+          "telegramApi": {
+            "id": "",
+            "name": "Allert Bot Token"
+          }
+        }
+      },
+      {
+        "id": "592ae32f-3fa5-4a70-a795-8b77b5bc49b3",
+        "name": "Gemini Chat Model",
+        "type": "@n8n/n8n-nodes-langchain.lmChatGoogleGemini",
+        "typeVersion": 1.2,
+        "position": [
+          160,
+          224
+        ],
+        "parameters": {
+          "modelName": "models/gemini-3-flash-preview",
+          "options": {
+            "temperature": 0.2
+          }
+        },
+        "credentials": {
+          "googlePalmApi": {
+            "id": "",
+            "name": "Google Gemini (PaLM) API"
+          }
+        }
+      },
+      {
+        "id": "762c0180-d8b2-4f27-9c6e-f5dce33a7566",
+        "name": "Send raw alert",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          560,
+          200
+        ],
+        "parameters": {
+          "additionalFields": {
+            "appendAttribution": false
+          },
+          "chatId": "YOUR_TELEGRAM_CHAT_ID",
+          "text": "=⚠️ AI не зміг розібрати лист, ось оригінал\n📧 {{ $('Gmail Trigger').item.json.subject }}\n👤 {{ $('Gmail Trigger').item.json.from.value[0].address }}\n🕐 {{ DateTime.fromJSDate(new Date($('Gmail Trigger').item.json.date)).setZone('Europe/Kiev').toFormat('dd.MM, HH:mm') }}"
+        },
+        "credentials": {
+          "telegramApi": {
+            "id": "",
+            "name": "Allert Bot Token"
+          }
+        },
+        "webhookId": "4655efd9-e1ab-4413-8b91-3a688912df88"
+      }
+    ],
+    "connections": {
+      "Gmail Trigger": {
+        "main": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "AI Agent": {
+        "main": [
+          [
+            {
+              "node": "Send alert",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Send raw alert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Structured Output Parser": {
+        "ai_outputParser": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_outputParser",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Gemini Chat Model": {
+        "ai_languageModel": [
+          [
+            {
+              "node": "AI Agent",
+              "type": "ai_languageModel",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Anastasiia Ukrainska (via MCP)",
+    "name": "Gemini замість мертвої free-моделі + страховка + ширший фільтр",
+    "description": "nvidia/nemotron :free перестала бути безкоштовною, бот падав з 26.10. Модель → Google Gemini (своя credential). AI Agent при помилці шле сирий алерт (тема + відправник). Фільтр Gmail: додано declined, suspended, unsuccessful, fail, помилки, не вдалося, відхилено, не пройшов. Промпт: платформи GitHub і Payment.",
+    "autosaved": false,
+    "createdAt": "2026-10-31T10:30:47.790Z",
+    "updatedAt": "2026-10-31T10:30:47.790Z",
+    "workflowPublishHistory": [
+      {
+        "id": 116,
+        "workflowId": "o5sLLV6GUsgNZV8n",
+        "versionId": "4525e694-4184-497b-971c-4f2ffcf5e59f",
+        "event": "activated",
+        "userId": "8f722349-c974-4f2d-a88e-f0aee42ec334",
+        "createdAt": "2026-10-31T10:30:55.564Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}

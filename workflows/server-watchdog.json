@@ -1,0 +1,323 @@
+{
+  "name": "server-watchdog",
+  "description": "Пульс сервера: сервер кожні 5 хв шле POST /server-pulse (ok/restarted/failed). Алерти в Allert Bot: бот перезапущено / не піднявся / сервер мовчить 20+ хв / знову на зв'язку.",
+  "active": true,
+  "createdAt": "2026-11-01T11:48:39.822Z",
+  "updatedAt": "2026-11-01T11:48:59.331Z",
+  "isArchived": false,
+  "versionCounter": 2,
+  "sourceWorkflowId": null,
+  "nodes": [
+    {
+      "id": "8bb3b21d-4923-4247-b99c-e9880ed04b5d",
+      "name": "POST pulse",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.2,
+      "position": [
+        0,
+        200
+      ],
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "server-pulse",
+        "responseMode": "onReceived",
+        "options": {
+          "onlyRunIf": "={{ $json.headers['x-pulse-key'] === 'YOUR_PULSE_KEY' }}"
+        }
+      },
+      "webhookId": "63e159c4-81d5-4215-ae64-053e1b27241f"
+    },
+    {
+      "id": "70c526ab-7587-4db2-be96-adb7e897343d",
+      "name": "Record pulse",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// body: { status: 'ok' | 'restarted' | 'failed' | 'reset', detail: '...' }\nconst sd = $getWorkflowStaticData('global');\nconst b = $input.first().json.body || {};\nif (b.status === 'reset') { delete sd.lastSeen; sd.downAlerted = false; return []; }\nconst now = DateTime.now().setZone('Europe/Kiev');\nconst t = now.toFormat('dd.MM, HH:mm');\nconst detail = String(b.detail || '').slice(0, 500);\nconst out = [];\nif (sd.downAlerted) {\n  out.push({ json: { text: '🟢 Сервер · знову на зв\\'язку\\n🕐 ' + t } });\n  sd.downAlerted = false;\n}\nsd.lastSeen = now.toISO();\nif (b.status === 'restarted') {\n  out.push({ json: { text: '🟡 Сервер · бот\\n🕐 ' + t + '\\n💥 Бот лежав, сторож його перезапустив' + (detail ? '\\n🔎 ' + detail : '') } });\n} else if (b.status === 'failed') {\n  out.push({ json: { text: '🔴 Сервер · бот\\n🕐 ' + t + '\\n💥 Бот лежить, рестарти не допомогли — треба ти' + (detail ? '\\n🔎 ' + detail : '') } });\n}\nreturn out;"
+      }
+    },
+    {
+      "id": "952a461b-298a-452f-bfbb-1b6afb95ec82",
+      "name": "Send alert",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        480,
+        300
+      ],
+      "parameters": {
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "YOUR_TELEGRAM_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false
+        }
+      },
+      "credentials": {
+        "telegramApi": {
+          "id": "",
+          "name": "Allert Bot Token"
+        }
+      },
+      "webhookId": "f5d50dd0-5b0c-4774-98d1-c086b5ca1b8c"
+    },
+    {
+      "id": "75e67dcd-0cad-4dd2-89f6-589c674cf917",
+      "name": "Every 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        0,
+        420
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 10
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "fba83ba4-4f8f-4efc-9355-040762d0fe28",
+      "name": "Check silence",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        240,
+        420
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "language": "javaScript",
+        "jsCode": "// Сервер шле пульс кожні 5 хв. 20+ хв тиші = щось ліг цілком.\nconst sd = $getWorkflowStaticData('global');\nif (!sd.lastSeen || sd.downAlerted) return [];\nconst last = DateTime.fromISO(sd.lastSeen).setZone('Europe/Kiev');\nconst mins = Math.round(DateTime.now().diff(last, 'minutes').minutes);\nif (mins < 20) return [];\nsd.downAlerted = true;\nreturn [{ json: { text: '🔴 Сервер · мовчить\\n🕐 останній сигнал ' + last.toFormat('dd.MM, HH:mm') + ' (' + mins + ' хв тому)\\n💥 Ліг весь сервер або мережа — бот теж не працює' } }];"
+      }
+    }
+  ],
+  "connections": {
+    "POST pulse": {
+      "main": [
+        [
+          {
+            "node": "Record pulse",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record pulse": {
+      "main": [
+        [
+          {
+            "node": "Send alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 10 min": {
+      "main": [
+        [
+          {
+            "node": "Check silence",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check silence": {
+      "main": [
+        [
+          {
+            "node": "Send alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "nodeGroups": [],
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": true
+  },
+  "activeVersion": {
+    "versionId": "e2570f8b-ceb4-4638-9fbf-c15d86098c9b",
+    "workflowId": "KiatBoVxwbwfTAdz",
+    "nodes": [
+      {
+        "id": "8bb3b21d-4923-4247-b99c-e9880ed04b5d",
+        "name": "POST pulse",
+        "type": "n8n-nodes-base.webhook",
+        "typeVersion": 2.2,
+        "position": [
+          0,
+          200
+        ],
+        "parameters": {
+          "httpMethod": "POST",
+          "path": "server-pulse",
+          "responseMode": "onReceived",
+          "options": {
+            "onlyRunIf": "={{ $json.headers['x-pulse-key'] === 'YOUR_PULSE_KEY' }}"
+          }
+        },
+        "webhookId": "63e159c4-81d5-4215-ae64-053e1b27241f"
+      },
+      {
+        "id": "70c526ab-7587-4db2-be96-adb7e897343d",
+        "name": "Record pulse",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          240,
+          200
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// body: { status: 'ok' | 'restarted' | 'failed' | 'reset', detail: '...' }\nconst sd = $getWorkflowStaticData('global');\nconst b = $input.first().json.body || {};\nif (b.status === 'reset') { delete sd.lastSeen; sd.downAlerted = false; return []; }\nconst now = DateTime.now().setZone('Europe/Kiev');\nconst t = now.toFormat('dd.MM, HH:mm');\nconst detail = String(b.detail || '').slice(0, 500);\nconst out = [];\nif (sd.downAlerted) {\n  out.push({ json: { text: '🟢 Сервер · знову на зв\\'язку\\n🕐 ' + t } });\n  sd.downAlerted = false;\n}\nsd.lastSeen = now.toISO();\nif (b.status === 'restarted') {\n  out.push({ json: { text: '🟡 Сервер · бот\\n🕐 ' + t + '\\n💥 Бот лежав, сторож його перезапустив' + (detail ? '\\n🔎 ' + detail : '') } });\n} else if (b.status === 'failed') {\n  out.push({ json: { text: '🔴 Сервер · бот\\n🕐 ' + t + '\\n💥 Бот лежить, рестарти не допомогли — треба ти' + (detail ? '\\n🔎 ' + detail : '') } });\n}\nreturn out;"
+        }
+      },
+      {
+        "id": "952a461b-298a-452f-bfbb-1b6afb95ec82",
+        "name": "Send alert",
+        "type": "n8n-nodes-base.telegram",
+        "typeVersion": 1.2,
+        "position": [
+          480,
+          300
+        ],
+        "parameters": {
+          "resource": "message",
+          "operation": "sendMessage",
+          "chatId": "YOUR_TELEGRAM_CHAT_ID",
+          "text": "={{ $json.text }}",
+          "additionalFields": {
+            "appendAttribution": false
+          }
+        },
+        "credentials": {
+          "telegramApi": {
+            "id": "",
+            "name": "Allert Bot Token"
+          }
+        },
+        "webhookId": "f5d50dd0-5b0c-4774-98d1-c086b5ca1b8c"
+      },
+      {
+        "id": "75e67dcd-0cad-4dd2-89f6-589c674cf917",
+        "name": "Every 10 min",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.4,
+        "position": [
+          0,
+          420
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 10
+              }
+            ]
+          }
+        }
+      },
+      {
+        "id": "fba83ba4-4f8f-4efc-9355-040762d0fe28",
+        "name": "Check silence",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          240,
+          420
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "language": "javaScript",
+          "jsCode": "// Сервер шле пульс кожні 5 хв. 20+ хв тиші = щось ліг цілком.\nconst sd = $getWorkflowStaticData('global');\nif (!sd.lastSeen || sd.downAlerted) return [];\nconst last = DateTime.fromISO(sd.lastSeen).setZone('Europe/Kiev');\nconst mins = Math.round(DateTime.now().diff(last, 'minutes').minutes);\nif (mins < 20) return [];\nsd.downAlerted = true;\nreturn [{ json: { text: '🔴 Сервер · мовчить\\n🕐 останній сигнал ' + last.toFormat('dd.MM, HH:mm') + ' (' + mins + ' хв тому)\\n💥 Ліг весь сервер або мережа — бот теж не працює' } }];"
+        }
+      }
+    ],
+    "connections": {
+      "POST pulse": {
+        "main": [
+          [
+            {
+              "node": "Record pulse",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Record pulse": {
+        "main": [
+          [
+            {
+              "node": "Send alert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Every 10 min": {
+        "main": [
+          [
+            {
+              "node": "Check silence",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check silence": {
+        "main": [
+          [
+            {
+              "node": "Send alert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "nodeGroups": [],
+    "authors": "Anastasiia Ukrainska (via MCP)",
+    "name": "Add reset status for testing",
+    "description": "Updated nodes: Record pulse",
+    "autosaved": false,
+    "createdAt": "2026-11-01T11:48:59.332Z",
+    "updatedAt": "2026-11-01T11:48:59.332Z",
+    "workflowPublishHistory": [
+      {
+        "id": 125,
+        "workflowId": "KiatBoVxwbwfTAdz",
+        "versionId": "e2570f8b-ceb4-4638-9fbf-c15d86098c9b",
+        "event": "activated",
+        "userId": "8f722349-c974-4f2d-a88e-f0aee42ec334",
+        "createdAt": "2026-11-01T11:49:03.188Z"
+      }
+    ]
+  },
+  "parentFolder": null
+}
